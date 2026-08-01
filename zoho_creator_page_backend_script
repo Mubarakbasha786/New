@@ -1,98 +1,254 @@
-input.searchRec = input.searchRec.trim();
-resultList = List();
-// ── Guard: blank search would match everything via contains("") ──
-if(input.searchRec.isEmpty())
+<%{
+	// new code
+	return_list = input.result;
+	totalReq = 0;
+	completedCount = 0;
+	canceledCount = 0;
+	pendingCount = 0;
+	
+	totalReq = 0;
+completedCount = 0;
+canceledCount = 0;
+pendingCount = 0;
+LogiRequestList = List();
+if(!input.return_list.isEmpty())
 {
-	info "Empty search term.";
-	resultList = "Empty search term";
-	return;
-}
-// ── Resolve lookups to their matching master IDs ──
-expIds = Expense_Items[Expense_Item_Name.contains(input.searchRec)].ID.getAll();
-assetIds = Asset_Master_Entry[Asset_Name.contains(input.searchRec)].ID.getAll();
-inveIds = Inventory_Master[Name.contains(input.searchRec)].ID.getAll();
-projIds = Projects[Project_Name.contains(input.searchRec)].ID.getAll();
-// ── Collect matched LGR IDs via criteria (no record loop) ──
-matchedIds = List();
-// direct text: parent field + subform text fields, one OR query
-matchedIds.addAll(LogiRequest[Request.contains(input.searchRec) || Requested_Items.Type_of_Request.contains(input.searchRec) || Requested_Items.Item_Details.contains(input.searchRec)].ID.getAll());
-// lookup matches — ONLY when list is non-empty (empty 'in' breaks the query)
-if(!projIds.isEmpty())
-{
-	matchedIds.addAll(LogiRequest[Project_Name in projIds].ID.getAll());
-}
-if(input.searchRec == "all")
-{
-	matchedIds.addAll(LogiRequest[ID != null].ID.getAll());
-}
-if(input.searchRec == "Mobilize_from_Store")
-{
-	matchedIds.addAll(LogiRequest[Mobilize_from_Store == true].ID.getAll());
-}
-if(input.searchRec == "Cash_purchase_PC_Card")
-{
-	matchedIds.addAll(LogiRequest[Cash_purchase_PC_Card == true].ID.getAll());
-}
-if(input.searchRec == "Vendor_Purchase_Required")
-{
-	matchedIds.addAll(LogiRequest[Vendor_Purchase_Required == true].ID.getAll());
-}
-if(input.searchRec == "Credit_purchase")
-{
-	matchedIds.addAll(LogiRequest[Credit_purchase == true].ID.getAll());
-}
-if(input.searchRec == "Direct_Issue_Voucher")
-{
-	matchedIds.addAll(LogiRequest[Direct_Issue_Voucher == true].ID.getAll());
-}
-if(!expIds.isEmpty())
-{
-	matchedIds.addAll(LogiRequest[Requested_Items.Expense_Item in expIds].ID.getAll());
-}
-if(!assetIds.isEmpty())
-{
-	matchedIds.addAll(LogiRequest[Requested_Items.Asset in assetIds].ID.getAll());
-}
-if(!inveIds.isEmpty())
-{
-	matchedIds.addAll(LogiRequest[Requested_Items.Inventory_Item in inveIds].ID.getAll());
-}
-matchedIds = matchedIds.distinct();
-// ── Build details for matched records only (single fetch) ──
-if(!matchedIds.isEmpty())
-{
-	for each  lgr in LogiRequest[ID in matchedIds]
+	idList = List();
+	idMapPair = Map();
+	for each  resrec in return_list.toList()
 	{
-		itemList = List();
-		for each  rec in lgr.Requested_Items
-		{
-			itemMap = Map();
-			itemMap.put("type",ifnull(rec.Type_of_Request,""));
-			itemMap.put("details",ifnull(rec.Item_Details,""));
-			itemMap.put("qty",ifnull(rec.Procure_Quantity,0));
-			itemList.add(itemMap);
-		}
-		proj = "";
-		if(lgr.Project_Name != null)
-		{
-			proj = ifnull(lgr.Project_Name.Project_Name,"");
-		}
-		detail = Map();
-		detail.put("id",lgr.ID);
-		detail.put("request",ifnull(lgr.Request,""));
-		detail.put("status",ifnull(lgr.Status,""));
-		detail.put("project",proj);
-		detail.put("items",itemList);
-		resultList.add(detail);
+		rid = resrec.get("id").toLong();
+		idList.add(rid);
+		idMapPair.put(rid,resrec);
 	}
+	idList = idList.sort(false);
+	for each  sid in idList
+	{
+		LogiRequestList.add(idMapPair.get(sid));
+	}
+	// ── COUNTS: from the matched ID list, via cheap .count() queries ──
+	totalReq = idList.size();
+	completedCount = LogiRequest[ID in idList && (Status == "Completed" || Status == "Mobilization Completed" || Status == "Issued")].count();
+	canceledCount = LogiRequest[ID in idList && Status == "Request Canceled"].count();
+	pendingCount = totalReq - completedCount - canceledCount;
 }
-info "Matched records: " + resultList.size();
-info "******************************";
-info "Full details :" + resultList;
-reccoll = Collection();
-for each  rec in resultList
+else
 {
-	reccoll.insert(rec.get("id"));
+	for each  val in LogiRequest[ID != 0 && Status != "Request Canceled"] sort by Request desc
+	{
+		LogiRequestList.add(val.ID);
+	}
+	// ── COUNTS: full register, cheap .count() queries ──
+	totalReq = LogiRequest[ID != 0].count();
+	completedCount = LogiRequest[ID != 0 && (Status == "Completed" || Status == "Mobilization Completed" || Status == "Issued")].count();
+	canceledCount = LogiRequest[ID != 0 && Status == "Request Canceled"].count();
+	pendingCount = totalReq - completedCount - canceledCount;
 }
-input.result_rec = reccoll.toString();
-input.result = resultList;
+
+bannerHTML = "";
+searchTxt = ifnull(input.searchRec,"all");
+clean = searchTxt.replaceAll("_"," ").toUpperCase();
+bannerHTML = "<div style='background:#FFFFFF;border:1px solid #E5E7EB;border-radius:12px;padding:16px 20px;margin-bottom:15px;box-shadow:0 2px 8px rgba(0,0,0,.06);font-family:Arial,sans-serif;'>";
+bannerHTML = bannerHTML + "<div style='display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:20px;'>";
+// 1. Filtered Request Method
+bannerHTML = bannerHTML
++ "<div style='display:flex;align-items:center;gap:12px;'>"
+
++ "<div style='width:42px;height:42px;background:#EFF6FF;border-radius:50%;display:flex;justify-content:center;align-items:center;'>"
+
++ "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='#2563EB' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
++ "<polygon points='22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3'></polygon>"
++ "</svg>"
+
++ "</div>"
+
++ "<div>"
++ "<div style='font-size:13px;color:#64748B;'>Filtered Request Method</div>"
++ "<div style='font-size:20px;font-weight:700;color:#2563EB;'>" + clean + "</div>"
++ "</div>"
+
++ "</div>";
+// divider
+bannerHTML = bannerHTML + "<div style='width:1px;height:44px;background:#E5E7EB;'></div>";
+// 2. Total No of Request
+bannerHTML = bannerHTML + "<div style='text-align:center;'>" + "<div style='font-size:13px;color:#64748B;'>Total No of Request</div>" + "<div style='font-size:24px;font-weight:bold;color:#1E293B;'>" + totalReq + "</div>" + "</div>";
+// 3. Completed
+bannerHTML = bannerHTML + "<div style='text-align:center;'>" + "<div style='font-size:13px;color:#16A34A;'>Completed</div>" + "<div style='font-size:24px;font-weight:bold;color:#16A34A;'>" + completedCount + "</div>" + "</div>";
+// 4. Canceled Request
+bannerHTML = bannerHTML + "<div style='text-align:center;'>" + "<div style='font-size:13px;color:#EA580C;'>Canceled Request</div>" + "<div style='font-size:24px;font-weight:bold;color:#EA580C;'>" + canceledCount + "</div>" + "</div>";
+// 5. Pending Request
+bannerHTML = bannerHTML + "<div style='text-align:center;'>" + "<div style='font-size:13px;color:#DC2626;'>Pending Request</div>" + "<div style='font-size:24px;font-weight:bold;color:#DC2626;'>" + pendingCount + "</div>" + "</div>";
+bannerHTML = bannerHTML + "</div>";
+bannerHTML = bannerHTML + "</div>";
+	%>
+<div style="font-family:Arial, sans-serif; background-color:#f5f7fa; padding:20px;">
+	<div style="
+	max-height:100vh;
+	overflow-y:auto;
+	overflow-x:auto;
+	border:1px solid #ddd;
+">
+	<table style="width:100%; border-collapse:collapse;">
+            <thead>
+			<tr>
+			<th colspan="7" style="padding:0; background:#fff;position:sticky; top:0;z-index:3"><%=bannerHTML%></th>
+			</tr>
+			<tr>
+				<th style="position:sticky; top:5.5rem;z-index:2; background:#2f4050; color:#fff; padding:12px;text-align:left;">LogiRequest #</th>
+				<th style="position:sticky; top:5.5rem;z-index:2; background:#2f4050; color:#fff; padding:12px;text-align:left;">Requested Date</th>
+				<th style="position:sticky; top:5.5rem;z-index:2; background:#2f4050; color:#fff; padding:12px;text-align:left;">Request Type</th>
+				<th style="position:sticky; top:5.5rem;z-index:2; background:#2f4050; color:#fff; padding:12px;text-align:left;">Requested By</th>
+				<th style="position:sticky; top:5.5rem;z-index:2; background:#2f4050; color:#fff; padding:12px;text-align:left;">Requested From</th>
+				<th style="position:sticky; top:5.5rem;z-index:2; background:#2f4050; color:#fff; padding:12px;text-align:left;">Status</th>
+				<th style="position:sticky; top:5.5rem;z-index:2; background:#2f4050; color:#fff; padding:12px;text-align:left;width:20%">Holding Reason</th>
+               </tr>
+            </thead>
+			<tbody>
+<%
+	if(LogiRequestList != null)
+	{
+		for each  ftLogReq in LogiRequestList
+		{
+			// ftLogReq is an ID → fetch the actual record
+			if(ftLogReq.contains("id"))
+			{
+				lgID = LogiRequest[ID == ftLogReq.get("id").toLong()];
+			}
+			else
+			{
+				lgID = LogiRequest[ID == ftLogReq.toLong()];
+			}
+			requesterLocation = Warehouse[ID == lgID.Location_of_Requester].Warehouse_Name;
+			user = "";
+			if(lgID.Requester_Name != null)
+			{
+				user = Employee_Master[ID == lgID.Requester_Name].Employee_Name;
+			}
+			statusStyle = "padding:4px 10px; border-radius:12px; font-size:12px; font-weight:bold; display:inline-block;";
+			if(lgID.Mobilize_from_Store == true)
+			{
+				requestMode = "Store Inventory Mobilization";
+			}
+			else if(lgID.Vendor_Purchase_Required == true)
+			{
+				requestMode = "Vendor Procurement";
+			}
+			else if(lgID.Credit_purchase == true)
+			{
+				requestMode = "Credit Purchase";
+			}
+			else if(lgID.Cash_purchase_PC_Card == true)
+			{
+				requestMode = "Cash / Procurement Card Purchase";
+			}
+			else if(lgID.Direct_Issue_Voucher == true)
+			{
+				requestMode = "Direct Issue Voucher";
+			}
+			else if(lgID.Mobilized_from_Vendor == true)
+			{
+				requestMode = "Vendor Mobilization (Direct Issue Voucher)";
+			}
+			else
+			{
+				requestMode = "---";
+			}
+			statusKey = lgID.Status;
+			// ── One message per status ──
+			msgMap = Map();
+			msgMap.put("Pending","LGR Initiated, Awaiting Line Manager Approval");
+			msgMap.put("Project In-Charge Approved","Line Manager Approved, Awaiting Logistics verification");
+			msgMap.put("Logistics Representative Approved","Logistics Verified, Awaiting next approval step");
+			msgMap.put("Quotation Send","BSCR Uploaded quotations, Awaiting Logistics to add Notes");
+			msgMap.put("PO Notes Added","Logistics added Notes, Awaiting GM Quotation Approval");
+			msgMap.put("GM Approved","GM Approved, Awaiting next step");
+			msgMap.put("Quotation Approved","GM Quotation Approved, Awaiting BSCR to Draft PO.");
+			msgMap.put("Initiated PO","BSCR Drafted PO, Awaiting GM to Review & Approve PO");
+			msgMap.put("PO Approved By GM","GM Approved PO, Awaiting CFA/A&F Manager PO approval in (FG)");
+			msgMap.put("PO Approved","GM/CEO PO Approved in BOOKS, Awaiting Finance Dept to Initiate payment");
+			msgMap.put("Credit PO Approved","CEO payment Approved, Awaiting BSCR to Email Vendor");
+			msgMap.put("Payment Approved by CEO","CEO Payment Approved, Awaiting next step");
+			msgMap.put("Payment Requested","Finance Dept Initiated payment, Awaiting CEO Approval");
+			msgMap.put("Initiated – Additional Payment Request","Awaiting GM Approval");
+			msgMap.put("GM Approved – Proceed to Procurement","Approved by GM. Awaiting Requester to Create a Bills / Expense");
+			msgMap.put("Request Cash Withdrawal","Requester Requested Cash Withdrawal, Awaiting GM Approval");
+			msgMap.put("GM Approved - Cash Withdrawal","GM Approved Cash Withdrawal, Awaiting Requester to Generate Bill / Expense");
+			msgMap.put("Cash Withdrawal Rejected by GM","GM Rejected Cash Withdrawal, Awaiting Requester to Re-Initiate Request");
+			msgMap.put("Payment Request Skipped by Finance","Payment skipped by Finance. Awaiting Requester to create the bill or expense.");
+			msgMap.put("Expense / Bill Partially Created","Bill or expense partially created. Awaiting Requester to Complete the Request");
+			msgMap.put("Expense / Bill Created","Bill/expense created. Awaiting CF/AFM to Approve the Transactions in (FG)");
+			msgMap.put("Email Sent to Vendor","BSCR Emailed PO to Vendor, Awaiting SK/LG/BSCR/FD to Upload Bill & Delivery Note.");
+			msgMap.put("Vendor Email Ignored","BSCR Ignored PO Email, Awaiting SK/LG/BSCR/FD to Upload Bill & Delivery Note.");
+			msgMap.put("Delivery Note & Bill Added","Bill & Delivery Note Uploaded, Awaiting Finance Dept to Convert PO to BILL in (FG)");
+			msgMap.put("Mobilization Request","Bill Approved in BOOKS, Awaiting Storekeeper to initiate Mobilization");
+			msgMap.put("Mobilized","Storekeeper initiated Mobilization, Awaiting Driver to update Transit");
+			msgMap.put("Under Transportation","Under Transit, Awaiting Driver to update the delivery");
+			msgMap.put("Delivered","Items Delivered to requester, Awaiting Site Rep/Storekeeper to Receive");
+			msgMap.put("Mobilization Completed","Delivered. (Site Rep/Storekeeper Received the delivery)");
+			msgMap.put("Completed","Request Completed");
+			msgMap.put("Issued","Completed. Items are issued to Site");
+			msgMap.put("Request Canceled","Request Canceled");
+			msgMap.put("Rejected","Request Rejected");
+			// ── Message (raw status as fallback) ──
+			status = ifnull(msgMap.get(statusKey),statusKey);
+			// ── Color: green = done, red = canceled/rejected, else yellow ──
+			statusStyle = "padding:4px 10px; border-radius:12px; font-size:12px; font-weight:bold; display:inline-block;";
+			greenSet = {"Mobilization Completed","Completed","Issued"};
+			redSet = {"Cash Withdrawal Rejected by GM","Request Canceled","Rejected"};
+			if(greenSet.contains(statusKey))
+			{
+				statusStyle = statusStyle + "background-color:#d4edda; color:#155724;";
+			}
+			else if(redSet.contains(statusKey))
+			{
+				statusStyle = statusStyle + "background-color:#FDE2E2; color:#B91C1C;";
+			}
+			else
+			{
+				statusStyle = statusStyle + "background-color:#fff3cd; color:#856404;";
+			}
+			%>
+<tr style="border-bottom:1px solid #e0e0e0;">
+<tr>
+<td style="padding:12px;">
+                 <a href="https://creatorapp.zoho.sa/m.alsuhaimi_marasah/fixed-assets/#Report:LogiRequest_Report?ID=<%=lgID.ID%>">
+        <%=lgID.Request%>
+    </a>
+</td>
+				<td style="padding:12px;text-align:left;"><%=lgID.Date_Of_Request%></td>
+					<td style="padding:12px;text-align:left;"><%=requestMode%></td>
+					<td style="padding:12px;text-align:left;"><%=user%></td>
+					<td style="padding:12px;text-align:left;"><%=requesterLocation%></td>
+					<td style="padding:12px;text-align:left;">
+					<span style="<%=statusStyle%>"><%=statusKey%><span/>
+					</td>
+					<td style="padding:12px;text-align:left;">
+<%
+			if(!lgID.Holding_Reason.isEmpty())
+			{
+				%>
+<span style="padding:4px 10px; border-radius:12px; font-size:12px; font-weight:bold; display:inline-block; background:#FDE2E2; color:#B91C1C;">
+						<%=lgID.Holding_Reason%>
+						</span>
+<%
+			}
+			%>
+</td>
+</tr>
+<%
+		}
+	}
+	else
+	{
+		%>
+<tr>
+    <td colspan="7" style="padding:40px; text-align:center; color:#888; font-size:15px;">No matching requests found.</td>
+</tr>
+<%
+	}
+	%>
+</tbody>
+</div>
+<%
+
+}%>
