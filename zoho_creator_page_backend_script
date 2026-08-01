@@ -1,0 +1,98 @@
+input.searchRec = input.searchRec.trim();
+resultList = List();
+// ── Guard: blank search would match everything via contains("") ──
+if(input.searchRec.isEmpty())
+{
+	info "Empty search term.";
+	resultList = "Empty search term";
+	return;
+}
+// ── Resolve lookups to their matching master IDs ──
+expIds = Expense_Items[Expense_Item_Name.contains(input.searchRec)].ID.getAll();
+assetIds = Asset_Master_Entry[Asset_Name.contains(input.searchRec)].ID.getAll();
+inveIds = Inventory_Master[Name.contains(input.searchRec)].ID.getAll();
+projIds = Projects[Project_Name.contains(input.searchRec)].ID.getAll();
+// ── Collect matched LGR IDs via criteria (no record loop) ──
+matchedIds = List();
+// direct text: parent field + subform text fields, one OR query
+matchedIds.addAll(LogiRequest[Request.contains(input.searchRec) || Requested_Items.Type_of_Request.contains(input.searchRec) || Requested_Items.Item_Details.contains(input.searchRec)].ID.getAll());
+// lookup matches — ONLY when list is non-empty (empty 'in' breaks the query)
+if(!projIds.isEmpty())
+{
+	matchedIds.addAll(LogiRequest[Project_Name in projIds].ID.getAll());
+}
+if(input.searchRec == "all")
+{
+	matchedIds.addAll(LogiRequest[ID != null].ID.getAll());
+}
+if(input.searchRec == "Mobilize_from_Store")
+{
+	matchedIds.addAll(LogiRequest[Mobilize_from_Store == true].ID.getAll());
+}
+if(input.searchRec == "Cash_purchase_PC_Card")
+{
+	matchedIds.addAll(LogiRequest[Cash_purchase_PC_Card == true].ID.getAll());
+}
+if(input.searchRec == "Vendor_Purchase_Required")
+{
+	matchedIds.addAll(LogiRequest[Vendor_Purchase_Required == true].ID.getAll());
+}
+if(input.searchRec == "Credit_purchase")
+{
+	matchedIds.addAll(LogiRequest[Credit_purchase == true].ID.getAll());
+}
+if(input.searchRec == "Direct_Issue_Voucher")
+{
+	matchedIds.addAll(LogiRequest[Direct_Issue_Voucher == true].ID.getAll());
+}
+if(!expIds.isEmpty())
+{
+	matchedIds.addAll(LogiRequest[Requested_Items.Expense_Item in expIds].ID.getAll());
+}
+if(!assetIds.isEmpty())
+{
+	matchedIds.addAll(LogiRequest[Requested_Items.Asset in assetIds].ID.getAll());
+}
+if(!inveIds.isEmpty())
+{
+	matchedIds.addAll(LogiRequest[Requested_Items.Inventory_Item in inveIds].ID.getAll());
+}
+matchedIds = matchedIds.distinct();
+// ── Build details for matched records only (single fetch) ──
+if(!matchedIds.isEmpty())
+{
+	for each  lgr in LogiRequest[ID in matchedIds]
+	{
+		itemList = List();
+		for each  rec in lgr.Requested_Items
+		{
+			itemMap = Map();
+			itemMap.put("type",ifnull(rec.Type_of_Request,""));
+			itemMap.put("details",ifnull(rec.Item_Details,""));
+			itemMap.put("qty",ifnull(rec.Procure_Quantity,0));
+			itemList.add(itemMap);
+		}
+		proj = "";
+		if(lgr.Project_Name != null)
+		{
+			proj = ifnull(lgr.Project_Name.Project_Name,"");
+		}
+		detail = Map();
+		detail.put("id",lgr.ID);
+		detail.put("request",ifnull(lgr.Request,""));
+		detail.put("status",ifnull(lgr.Status,""));
+		detail.put("project",proj);
+		detail.put("items",itemList);
+		resultList.add(detail);
+	}
+}
+info "Matched records: " + resultList.size();
+info "******************************";
+info "Full details :" + resultList;
+reccoll = Collection();
+for each  rec in resultList
+{
+	reccoll.insert(rec.get("id"));
+}
+input.result_rec = reccoll.toString();
+input.result = resultList;
